@@ -1,5 +1,9 @@
 # Aktifasi otomatisasi (sekali, ±60 detik)
 
+> **STATUS 2026-09-25: AKTIF.** `.github/workflows/live.yml` + `backtest.yml`
+> sudah ter-push via PAT scope `workflow`. Dokumen ini disimpan sebagai
+> prosedur pemulihan kalau workflow terhapus / repo di-clone ulang ke akun lain.
+
 File `setup/live.yml` + `setup/backtest.yml` adalah workflow GitHub Actions.
 Karena alasan keamanan, **file workflow hanya boleh dibuat lewat web GitHub
 atau token dengan scope `workflow`** — bot/sandbox dengan token `repo` saja

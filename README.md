@@ -39,7 +39,7 @@ ini menukar presisi jam dengan ketahanan macet, dan tidak kehilangan apa pun.
 | `sidang/` | Engine MC, generator, judge, ledger, feed multi-host Binance |
 | `data/` | Record live: `state.json`, `ledger.jsonl`, `trials.jsonl`, `runs.jsonl` — **di-commit** (ini bukunya) |
 | `web/`, `index.html` | Dashboard Pages, nol dependensi eksternal |
-| `setup/` | Kit aktifasi otomatisasi (kalau belum) |
+| `setup/` | Kit aktifasi otomatisasi — **sudah aktif** (workflow live + backtest terpasang) |
 
 ## Menjalankan manual
 
