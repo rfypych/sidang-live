@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
+from klines_log import append_klines
 from replay import DEFAULTS, INTERVAL_MS, ReplayCore, iso
 from sidang.feed import fetch_klines_range
 from sidang.ledger import PaperLedger
@@ -51,6 +52,7 @@ def main() -> int:
     trials_path = data_dir / "trials.jsonl"
     equity_path = data_dir / "equity.jsonl"
     runs_path = data_dir / "runs.jsonl"
+    klines_path = data_dir / "klines.jsonl"  # telemetry chart (bukan buku keputusan)
     iv_ms = INTERVAL_MS[a.interval]
 
     params = {
@@ -104,10 +106,13 @@ def main() -> int:
 
     n_trials = n_enters = n_exits = 0
     first_open = float(data["open_time"][new_idx[0]])
+    n_k = append_klines(klines_path, data, new_idx)  # telemetry: dedup via ts, aman idempoten
     print(
         f"[catch] {n_new} candle baru: {iso(first_open)} .. {iso(float(data['open_time'][new_idx[-1]]))} "
         f"| posisi: {'ADA' if ledger.position else 'flat'} | equity ${core.state['last_equity']:,.2f}"
     )
+    if n_k:
+        print(f"[chart] {n_k} candle -> data/klines.jsonl (telemetry dashboard)")
 
     for i in new_idx:
         ev = core.process_candle(

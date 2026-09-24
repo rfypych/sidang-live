@@ -19,8 +19,9 @@ GitHub Actions (cron tiap 15 menit, repo publik = menit gratis tak terbatas)
    │    4. commit data/ kembali ke repo ini (record = bagian dari git history)
    ▼
 GitHub Pages (domain gratis: https://rfypych.github.io/sidang-live/)
-   └─ index.html membaca data/*.jsonl + reports/backtest-latest.json
-      → ekuitas, P(TP) per sidang, tabel trade, heartbeat bot. HP-friendly.
+   └─ index.html + web/ membaca data/*.jsonl + reports/backtest-*.json
+      → candlestick chart harga (telemetry data/klines.jsonl), ekuitas, P(TP)
+        per sidang, tabel trade, perbandingan profil backtest, heartbeat. HP-friendly.
 ```
 
 **Kenapa catch-up, bukan loop 24/7?** Cron GitHub tidak presisi (bisa telat
@@ -34,11 +35,13 @@ ini menukar presisi jam dengan ketahanan macet, dan tidak kehilangan apa pun.
 | File | Peran |
 |---|---|
 | `replay.py` | Satu logika replay untuk backtest & live (konsistensi penuh) |
-| `backtest.py` | Walk-forward historis (`--months 6`), laporan di `reports/` |
+| `backtest.py` | Walk-forward historis (`--months 6`), laporan per-profil di `reports/` |
 | `live_catchup.py` | Loop paper otomatis untuk cron / dijalankan manual |
+| `klines_log.py` | Telemetry OHLCV untuk chart dashboard — BUKAN buku keputusan (aman OOS) |
+| `backfill_klines.py` | Isi historis chart harga sekali (`--days 5`) |
 | `sidang/` | Engine MC, generator, judge, ledger, feed multi-host Binance |
-| `data/` | Record live: `state.json`, `ledger.jsonl`, `trials.jsonl`, `runs.jsonl` — **di-commit** (ini bukunya) |
-| `web/`, `index.html` | Dashboard Pages, nol dependensi eksternal |
+| `data/` | Record live: `state.json`, `ledger.jsonl`, `trials.jsonl`, `runs.jsonl`, `klines.jsonl` — **di-commit** (ini bukunya) |
+| `web/`, `index.html` | Dashboard Pages (chart candlestick + kalibrasi profil), nol dependensi eksternal, bahasa visual BoardUI |
 | `setup/` | Kit aktifasi otomatisasi — **sudah aktif** (workflow live + backtest terpasang) |
 
 ## Menjalankan manual

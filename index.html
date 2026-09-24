@@ -11,38 +11,70 @@
 <body>
 
 <header>
-  <h1>SIDANG <span>— monitor paper live</span></h1>
+  <div class="mark">⚖️</div>
+  <h1>SIDANG <span>monitor paper live</span></h1>
   <span id="statusPill" class="pill">memuat…</span>
   <span class="spacer"></span>
   <button class="refresh" id="btnRefresh">segarkan</button>
 </header>
-<div class="small muted" id="metaLine" style="margin:-6px 0 10px">memuat…</div>
+<div class="small muted" id="metaLine" style="margin:-4px 0 10px">memuat…</div>
 <div class="small muted" id="lastRun" style="margin-bottom:12px"></div>
 <div class="banner" id="banner" style="display:none"></div>
 
 <div class="cards">
-  <div class="card"><div class="label">Ekuitas Virtual</div><div class="value" id="cEquity">—</div><div class="sub" id="cEquitySub"></div></div>
-  <div class="card"><div class="label">PnL Realized</div><div class="value" id="cPnl">—</div><div class="sub" id="cPnlSub"></div></div>
-  <div class="card"><div class="label">Trade Tertutup</div><div class="value" id="cTrades">—</div><div class="sub" id="cTradesSub"></div></div>
-  <div class="card"><div class="label">Posisi</div><div class="value" id="cPos">—</div><div class="sub" id="cPosSub"></div></div>
-  <div class="card"><div class="label">Sidang Terakhir</div><div class="value" id="cVerdict">—</div><div class="sub" id="cVerdictSub"></div></div>
+  <div class="card">
+    <div class="label">Ekuitas Virtual</div>
+    <div class="value" id="cEquity">—</div>
+    <div class="sub"><span class="chip flat" id="cEquityChip">—</span><span id="cEquitySub"></span></div>
+  </div>
+  <div class="card">
+    <div class="label">PnL Realized</div>
+    <div class="value" id="cPnl">—</div>
+    <div class="sub"><span class="chip flat" id="cPnlChip">fee</span><span id="cPnlSub"></span></div>
+  </div>
+  <div class="card">
+    <div class="label">Trade Tertutup</div>
+    <div class="value" id="cTrades">—</div>
+    <div class="sub" id="cTradesSub"></div>
+  </div>
+  <div class="card">
+    <div class="label">Posisi</div>
+    <div class="value" id="cPos">—</div>
+    <div class="sub" id="cPosSub"></div>
+  </div>
+  <div class="card">
+    <div class="label">Sidang Terakhir</div>
+    <div class="value" id="cVerdict">—</div>
+    <div class="sub" id="cVerdictSub"></div>
+  </div>
 </div>
 
 <div class="small" id="todayLine" style="margin-bottom:14px"></div>
 
 <section>
-  <h2>Kurva Ekuitas (uang virtual, mark-to-close)</h2>
+  <div class="sec-head">
+    <h2 id="priceTitle">Aksi Harga — candlestick</h2>
+    <span class="grow"></span>
+    <span class="pill" id="priceChip" style="display:none">—</span>
+  </div>
+  <div class="ohlc" id="ohlcReadout" style="margin-bottom:8px">—</div>
+  <canvas id="chartPrice"></canvas>
+  <div class="small muted" id="priceNote" style="margin-top:8px"></div>
+</section>
+
+<section>
+  <h2 style="margin-bottom:10px">Kurva Ekuitas (uang virtual, mark-to-close)</h2>
   <canvas id="chartEquity"></canvas>
 </section>
 
 <section>
-  <h2>P(TP) Pesimis per Sidang — 10.000 path × 2 generator</h2>
+  <h2 style="margin-bottom:10px">P(TP) Pesimis per Sidang — 10.000 path × 2 generator</h2>
   <canvas id="chartTrials"></canvas>
   <div class="small muted" id="trialsNote" style="margin-top:8px"></div>
 </section>
 
 <section>
-  <h2>Trade Tertutup (buku kertas, fee 0,25% roundtrip jujur)</h2>
+  <h2 style="margin-bottom:10px">Trade Tertutup (buku kertas, fee 0,25% roundtrip jujur)</h2>
   <div class="tbl-wrap">
   <table>
     <thead><tr><th>waktu exit (WIB)</th><th>entry</th><th>exit</th><th>alasan</th><th>gross</th><th>fee</th><th>pnl</th><th>pnl %</th></tr></thead>
@@ -52,15 +84,21 @@
 </section>
 
 <section id="backtestSection">
-  <h2>Backtest Walk-Forward (replay historis, tanpa fitting parameter)</h2>
-  <div class="grid2">
+  <h2 style="margin-bottom:10px">Backtest Walk-Forward — kalibrasi profil hakim</h2>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>profil</th><th>periode</th><th>sidang</th><th>ENTER</th><th>trade</th><th>WR</th><th>PF</th><th>return</th><th>maxDD</th><th>Sharpe</th></tr></thead>
+    <tbody id="btCompareBody"></tbody>
+  </table>
+  </div>
+  <div class="grid2" style="margin-top:12px">
     <div class="stat-rows" id="backtestBody"></div>
     <div><canvas id="chartBacktest"></canvas></div>
   </div>
 </section>
 
 <section>
-  <h2>Kesehatan Run (heartbeat bot)</h2>
+  <h2 style="margin-bottom:10px">Kesehatan Run (heartbeat bot)</h2>
   <div class="tbl-wrap">
   <table>
     <thead><tr><th>run (WIB)</th><th>candle</th><th>sidang</th><th>enter/exit</th><th>ekuitas</th><th>durasi</th><th>status</th></tr></thead>
@@ -78,6 +116,7 @@
 </footer>
 
 <script src="web/charts.js"></script>
+<script src="web/candles.js"></script>
 <script src="web/app.js"></script>
 </body>
 </html>

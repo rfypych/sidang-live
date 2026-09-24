@@ -1,11 +1,15 @@
-/* SIDANG live monitor — paper-only. Data: data/*.jsonl + reports/backtest-latest.json
-   Nol dependensi eksternal; refresh otomatis tiap 60 detik. */
+/* SIDANG live monitor v2 — paper-only. Data: data/*.jsonl + reports/*.json
+   Nol dependensi eksternal; refresh otomatis tiap 60 detik.
+   Chart harga: data/klines.jsonl (telemetry — bukan buku keputusan). */
 
 const $ = (id) => document.getElementById(id);
 const WIB = { timeZone: "Asia/Jakarta" };
+const IV_MS = 300000; // 5m — pembulatan marker exit ke candle
+
 const fmtUSD = (v, d = 2) =>
   (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("id-ID", { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtPct = (v, d = 1) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(d)}%`);
+const fmtPrice = (v) => v.toLocaleString("id-ID", { maximumFractionDigits: 1 });
 const fmtWIB = (iso, withDate = true) => {
   if (!iso) return "—";
   const d = new Date(iso.endsWith("Z") || iso.includes("T") ? iso : Number(iso));
@@ -17,6 +21,9 @@ const fmtWIB = (iso, withDate = true) => {
 };
 const cls = (v) => (v > 0 ? "pos" : v < 0 ? "neg" : "muted");
 const REASON = { take_profit: "TP", stop_loss: "SL", stop_loss_tie: "SL (tie)", timeout: "timeout" };
+const PAL = window.SIDANGCharts.C;
+
+let priceChart = null;
 
 async function fetchText(path) {
   try {
@@ -46,28 +53,32 @@ async function fetchJSONL(path) {
 
 function ago(iso) {
   if (!iso) return Infinity;
-  const ms = Date.now() - new Date(iso).getTime();
-  return ms / 60000;
+  return (Date.now() - new Date(iso).getTime()) / 60000;
 }
 
 async function load() {
-  const [state, trials, ledger, equity, runs, backtest] = await Promise.all([
+  const [state, trials, ledger, equity, runs, klines, btCon, btBal, btAgg, btLatest] = await Promise.all([
     fetchJSON("data/state.json"),
     fetchJSONL("data/trials.jsonl"),
     fetchJSONL("data/ledger.jsonl"),
     fetchJSONL("data/equity.jsonl"),
     fetchJSONL("data/runs.jsonl"),
+    fetchJSONL("data/klines.jsonl"),
+    fetchJSON("reports/backtest-conservative-latest.json"),
+    fetchJSON("reports/backtest-balanced-latest.json"),
+    fetchJSON("reports/backtest-aggressive-latest.json"),
     fetchJSON("reports/backtest-latest.json"),
   ]);
 
   renderHeader(state, runs);
   renderCards(state, ledger);
   renderToday(trials, ledger);
+  renderPrice(state, klines, ledger);
   renderEquityChart(equity);
   renderTrialsChart(trials);
   renderTrades(ledger);
   renderRuns(runs);
-  renderBacktest(backtest);
+  renderBacktest({ conservative: btCon, balanced: btBal, aggressive: btAgg, latest: btLatest });
   $("updated").textContent = "diperbarui " + new Date().toLocaleTimeString("id-ID", WIB) + " WIB";
 }
 
@@ -80,6 +91,7 @@ function renderHeader(state, runs) {
   pill.className = "pill " + (alive ? "ok" : "bad");
   const p = state ? state.params : {};
   $("metaLine").textContent = `${p.symbol || "—"} ${p.interval || ""} • profil ${p.profile || "—"} • TP ${p.tp}% / SL ${p.sl}% • fee ${p.fee}%`;
+  $("priceTitle").textContent = `${p.symbol || "BTCUSDT"} · ${p.interval || "5m"} — aksi harga`;
   $("lastRun").textContent = "run terakhir: " + (lastRun ? `${fmtWIB(lastRun)} WIB (${Math.round(ageMin)} mnt lalu)` : "belum ada");
   const banner = $("banner");
   if (!state) {
@@ -93,34 +105,49 @@ function renderHeader(state, runs) {
   }
 }
 
+function chipEl(kind, text) {
+  return `<span class="chip ${kind}">${text}</span>`;
+}
+
 function renderCards(state, ledger) {
   if (!state) {
     ["cEquity", "cPnl", "cTrades", "cPos", "cVerdict"].forEach((id) => ($(id).textContent = "—"));
     return;
   }
   const eq = state.last_equity ?? state.cash ?? 0;
+  const start = state.params ? state.params.cash : 10000;
   const pnl = state.realized_pnl ?? 0;
+
   $("cEquity").textContent = fmtUSD(eq);
   $("cEquity").className = "value";
-  $("cEquitySub").textContent = `kertas ${fmtUSD(state.cash)} • mulai ${fmtUSD(state.params ? state.params.cash : 10000, 0)}`;
+  const ret = start ? (eq / start - 1) * 100 : 0;
+  $("cEquityChip").outerHTML = chipEl(ret > 0.005 ? "up" : ret < -0.005 ? "down" : "flat", fmtPct(ret, 2)).replace("<span", '<span id="cEquityChip"');
+  $("cEquitySub").textContent = `mulai ${fmtUSD(start, 0)}`;
+
   $("cPnl").textContent = fmtUSD(pnl);
   $("cPnl").className = "value " + cls(pnl);
-  $("cPnlSub").textContent = `fee terbayar ${fmtUSD(state.fees_paid ?? 0)}`;
+  $("cPnlChip").outerHTML = chipEl(pnl > 0 ? "up" : pnl < 0 ? "down" : "flat", "fee " + fmtUSD(state.fees_paid ?? 0)).replace("<span", '<span id="cPnlChip"');
+  $("cPnlSub").textContent = `${state.n_enters ?? 0} entry`;
+
   const wr = state.n_exits ? Math.round((100 * state.n_wins) / state.n_exits) : null;
-  $("cTrades").textContent = state.n_exits != null ? `${state.n_exits} (${wr == null ? "—" : wr + "%"} WR)` : "—";
+  $("cTrades").textContent = state.n_exits != null ? `${state.n_exits}` : "—";
   $("cTrades").className = "value";
-  $("cTradesSub").textContent = `${state.n_enters ?? 0} entry • ${state.n_trials ?? 0} sidang`;
+  $("cTradesSub").innerHTML = `${wr == null ? "—" : wr + "%"} WR • ${state.n_trials ?? 0} sidang`;
+
   const pos = state.position;
   if (pos) {
-    $("cPos").innerHTML = `LONG ${fmtUSD(pos.entry_price)}<div class="sub">TP ${fmtUSD(pos.tp_price)} • SL ${fmtUSD(pos.sl_price)} • qty ${pos.qty.toFixed(5)}</div>`;
+    $("cPos").innerHTML = `LONG <span class="pos">${fmtUSD(pos.entry_price)}</span>`;
     $("cPos").className = "value pos";
+    $("cPosSub").textContent = `TP ${fmtUSD(pos.tp_price)} · SL ${fmtUSD(pos.sl_price)}`;
   } else {
     $("cPos").textContent = "FLAT";
     $("cPos").className = "value";
     $("cPosSub").textContent = "menunggu verdict ENTER";
   }
-  $("cVerdict").textContent = (state.last_verdict || "—").toUpperCase().replace("_", " ");
-  $("cVerdict").className = "value " + (state.last_verdict === "enter" ? "pos" : "muted");
+
+  const v = state.last_verdict || "—";
+  $("cVerdict").textContent = v.toUpperCase().replace("_", " ");
+  $("cVerdict").className = "value " + (v === "enter" ? "pos" : "muted");
   $("cVerdictSub").textContent = state.last_verdict_iso ? fmtWIB(state.last_verdict_iso) + " WIB" : "—";
 }
 
@@ -136,11 +163,73 @@ function renderToday(trials, ledger) {
     `<b>${exits.length}</b> exit • PnL <b class="${cls(pnl)}">${fmtUSD(pnl)}</b>`;
 }
 
+/* ---------- chart harga (candlestick) ---------- */
+
+function renderOHLC(c) {
+  const el = $("ohlcReadout");
+  if (!c) { el.textContent = "geser kursor di chart untuk membaca candle"; return; }
+  const up = c.c >= c.o;
+  const d = up ? "pos" : "neg";
+  const chg = (c.c / c.o - 1) * 100;
+  el.innerHTML =
+    `O <b>${fmtPrice(c.o)}</b> &nbsp;H <b class="${d}">${fmtPrice(c.h)}</b> &nbsp;L <b class="${d}">${fmtPrice(c.l)}</b> ` +
+    `&nbsp;C <b class="${d}">${fmtPrice(c.c)}</b> &nbsp;<span class="${d}">${chg >= 0 ? "▲" : "▼"}${Math.abs(chg).toFixed(2)}%</span> ` +
+    `&nbsp;V <b>${c.v.toFixed(1)}</b> BTC &nbsp;· ${fmtWIB(new Date(c.ts).toISOString(), false)} WIB`;
+}
+
+function renderPrice(state, klines, ledger) {
+  if (!priceChart) {
+    priceChart = new CandleChart($("chartPrice"), { onHover: renderOHLC, maxCandles: 600 });
+    window.SIDANGPrice = priceChart; // agar handler resize charts.js ikut menggambar ulang
+  }
+
+  const candles = klines
+    .filter((k) => k.ts != null && k.o != null && k.h != null && k.l != null && k.c != null)
+    .map((k) => ({ ts: k.ts, o: k.o, h: k.h, l: k.l, c: k.c, v: k.v ?? 0 }));
+  priceChart.setData(candles);
+
+  const hlines = [];
+  const markers = [];
+  if (state && state.position) {
+    const p = state.position;
+    hlines.push({ y: p.entry_price, color: PAL.yellow, label: "entry" });
+    hlines.push({ y: p.tp_price, color: PAL.teal, label: "TP" });
+    hlines.push({ y: p.sl_price, color: PAL.rose, label: "SL" });
+  }
+  for (const e of ledger) {
+    if (e.event === "enter" && e.position) {
+      const ts = (e.position.meta && e.position.meta.entry_open_ms) || Math.floor((e.ts * 1000) / IV_MS) * IV_MS;
+      markers.push({ ts, kind: "entry" });
+    } else if (e.event === "exit" && e.trade) {
+      markers.push({ ts: Math.floor((e.ts * 1000) / IV_MS) * IV_MS, kind: "exit" });
+    }
+  }
+  priceChart.setOverlays({ hlines, markers });
+
+  const last = candles[candles.length - 1];
+  const chip = $("priceChip");
+  if (last) {
+    const prev = candles.length > 1 ? candles[candles.length - 2].c : last.o;
+    const chg = (last.c / prev - 1) * 100;
+    const up = chg >= 0;
+    chip.style.display = "";
+    chip.textContent = `$${fmtPrice(last.c)} ${up ? "▲" : "▼"}${Math.abs(chg).toFixed(2)}%`;
+    chip.className = "pill " + (up ? "ok" : "bad");
+  } else {
+    chip.style.display = "none";
+  }
+
+  $("priceNote").innerHTML =
+    "candle <span class='pos'>lime = naik</span> / <span class='neg'>rose = turun</span> (pola BoardUI) • batang bawah = volume • " +
+    "garis putus <span style='color:var(--yellow)'>entry</span> / <span style='color:var(--teal)'>TP</span> / <span style='color:var(--rose)'>SL</span> tampil saat posisi terbuka • " +
+    "segitiga = entry/exit paper (data: klines.jsonl, telemetry)";
+}
+
 function renderEquityChart(equity) {
   const pts = equity.filter((e) => e.ts).map((e) => [e.ts, e.equity]);
   window.SIDANGCharts.drawChart($("chartEquity"), {
-    series: pts.length ? [{ points: pts, color: "#4ade80", width: 1.8 }] : [],
-    hlines: [{ y: 10000, color: "#fbbf24", label: "modal awal $10.000" }],
+    series: pts.length ? [{ points: pts, color: PAL.lime, width: 1.8, fill: true }] : [],
+    hlines: [{ y: 10000, color: PAL.yellow, label: "modal awal $10.000" }],
     yFmt: (v) => "$" + Math.round(v).toLocaleString("id-ID"),
     empty: "kurva ekuitas menyusul setelah run pertama",
   });
@@ -150,10 +239,10 @@ function renderTrialsChart(trials) {
   const tail = trials.slice(-1500);
   const be = tail.length ? tail[tail.length - 1].be_pct : 44.4;
   const pts = tail.filter((x) => x.p_tp_used != null).map((x) => [x.ts * 1, x.p_tp_used]);
-  const markers = tail.filter((x) => x.verdict === "enter").map((x) => ({ x: x.ts, y: x.p_tp_used, color: "#4ade80", r: 3.5 }));
+  const markers = tail.filter((x) => x.verdict === "enter").map((x) => ({ x: x.ts, y: x.p_tp_used, color: PAL.lime, r: 3.5 }));
   window.SIDANGCharts.drawChart($("chartTrials"), {
-    series: pts.length ? [{ points: pts, color: "#60a5fa", width: 1.3 }] : [],
-    hlines: [{ y: be, color: "#f87171", label: `breakeven ${be.toFixed(1)}%` }],
+    series: pts.length ? [{ points: pts, color: PAL.sky, width: 1.3 }] : [],
+    hlines: [{ y: be, color: PAL.rose, label: `breakeven ${be.toFixed(1)}%` }],
     markers,
     yFmt: (v) => v.toFixed(0) + "%",
     empty: "menunggu sidang pertama",
@@ -161,7 +250,7 @@ function renderTrialsChart(trials) {
   const last = tail[tail.length - 1];
   if (last) {
     $("trialsNote").textContent =
-      `sidang terakhir ${fmtWIB(last.iso)} WIB: P(TP) pesimis ${last.p_tp_used.toFixed(1)}% (mbb ${last.p_tp_mbb.toFixed(1)}% / garch ${last.p_tp_fhs != null ? last.p_tp_fhs.toFixed(1) + "%" : "—"}), EV ${last.ev_used.toFixed(2)}%, divergence ${last.div_pp.toFixed(1)}pp → ${last.verdict.toUpperCase()} • titik hijau = ENTER`;
+      `sidang terakhir ${fmtWIB(last.iso)} WIB: P(TP) pesimis ${last.p_tp_used.toFixed(1)}% (mbb ${last.p_tp_mbb.toFixed(1)}% / garch ${last.p_tp_fhs != null ? last.p_tp_fhs.toFixed(1) + "%" : "—"}), EV ${last.ev_used.toFixed(2)}%, divergence ${last.div_pp.toFixed(1)}pp → ${last.verdict.toUpperCase()} • titik lime = ENTER`;
   }
 }
 
@@ -210,28 +299,61 @@ function renderRuns(runs) {
   }
 }
 
-function renderBacktest(bt) {
-  const box = $("backtestSection");
-  if (!bt) {
-    $("backtestBody").innerHTML = "<span class='muted'>belum ada laporan backtest — jalankan <span class='mono'>python backtest.py</span> atau workflow manual di tab Actions</span>";
+/* ---------- backtest: perbandingan profil (kalibrasi ambang) ---------- */
+
+function renderBacktest(bts) {
+  const found = [
+    ["conservative", bts.conservative],
+    ["balanced", bts.balanced],
+    ["aggressive", bts.aggressive],
+  ].filter(([, r]) => r);
+  let reports = found;
+  if (!reports.length && bts.latest) reports = [[bts.latest.params ? bts.latest.params.profile : "latest", bts.latest]];
+
+  const tb = $("btCompareBody");
+  tb.innerHTML = "";
+  if (!reports.length) {
+    tb.innerHTML = "<tr><td colspan='10' class='muted' style='font-family:inherit'>belum ada laporan backtest — trigger <span class='mono'>sidang-backtest</span> di tab Actions repo</td></tr>";
+    $("backtestBody").innerHTML = "<span class='muted'>menunggu laporan…</span>";
+    window.SIDANGCharts.drawChart($("chartBacktest"), { series: [], empty: "—" });
     return;
   }
-  const s = bt.stats, d = bt.sidang;
-  const rows = [
-    ["periode", `${bt.period.from.slice(0, 10)} .. ${bt.period.to.slice(0, 10)} (${bt.period.months} bln, ${bt.period.bars.toLocaleString("id-ID")} bar)`],
-    ["sidang", `${d.n_trials.toLocaleString("id-ID")} trial • ${d.n_enters} ENTER (${d.enter_rate_pct}%)`],
-    ["hasil", `${fmtUSD(s.starting_cash, 0)} → <b class="${cls(s.total_return_pct)}">${fmtUSD(s.final_equity)}</b> (${fmtPct(s.total_return_pct, 2)})`],
-    ["trade", `${s.n_trades} • WR ${s.win_rate_pct ?? "—"}% • PF ${s.profit_factor ?? "—"}`],
-    ["risiko", `maxDD ${s.max_drawdown_pct}% • Sharpe(harian) ${s.sharpe_daily_ann} • exposure ${s.exposure_pct}%`],
-    ["fee", `${fmtUSD(s.fees_paid)} terbayar • ${JSON.stringify(s.exit_reasons)}`],
-  ];
+
+  for (const [name, bt] of reports) {
+    const s = bt.stats, d = bt.sidang;
+    const tr = document.createElement("tr");
+    if (name === "conservative") tr.className = "hl";
+    tr.innerHTML =
+      `<td><b>${name}</b></td>` +
+      `<td class="muted">${bt.period.from.slice(0, 10)} .. ${bt.period.to.slice(0, 10)} (${bt.period.months} bln)</td>` +
+      `<td>${d.n_trials.toLocaleString("id-ID")}</td>` +
+      `<td>${d.n_enters} <span class="muted">(${d.enter_rate_pct}%)</span></td>` +
+      `<td>${s.n_trades}</td>` +
+      `<td>${s.win_rate_pct ?? "—"}</td>` +
+      `<td>${s.profit_factor ?? "—"}</td>` +
+      `<td class="${cls(s.total_return_pct)}">${fmtPct(s.total_return_pct, 2)}</td>` +
+      `<td class="neg">${s.max_drawdown_pct}%</td>` +
+      `<td>${s.sharpe_daily_ann}</td>`;
+    tb.appendChild(tr);
+  }
+
+  const detail = bts.conservative || bts.latest || reports[0][1];
+  const s = detail.stats, d = detail.sidang;
   $("backtestBody").innerHTML =
-    rows.map(([k, v]) => `<div><span class="k">${k}</span><span>${v}</span></div>`).join("") +
-    `<div><span class="k">peringatan</span><span class="muted small">${bt.honesty.disclaimer}</span></div>` +
+    [
+      ["profil detail", `${detail.params.profile} • ${detail.period.symbol} ${detail.period.interval}`],
+      ["periode", `${detail.period.from.slice(0, 10)} .. ${detail.period.to.slice(0, 10)} (${detail.period.bars.toLocaleString("id-ID")} bar)`],
+      ["sidang", `${d.n_trials.toLocaleString("id-ID")} trial • ${d.n_enters} ENTER (${d.enter_rate_pct}%)`],
+      ["hasil", `${fmtUSD(s.starting_cash, 0)} → <b class="${cls(s.total_return_pct)}">${fmtUSD(s.final_equity)}</b> (${fmtPct(s.total_return_pct, 2)})`],
+      ["trade", `${s.n_trades} • WR ${s.win_rate_pct ?? "—"}% • PF ${s.profit_factor ?? "—"}`],
+      ["risiko", `maxDD ${s.max_drawdown_pct}% • Sharpe(harian) ${s.sharpe_daily_ann} • exposure ${s.exposure_pct}%`],
+      ["fee", `${fmtUSD(s.fees_paid)} terbayar • ${JSON.stringify(s.exit_reasons)}`],
+    ].map(([k, v]) => `<div><span class="k">${k}</span><span>${v}</span></div>`).join("") +
+    `<div><span class="k">peringatan</span><span class="muted small">${detail.honesty.disclaimer}</span></div>` +
     `<div><span class="k">unduh</span><span><a href="reports/backtest-latest.json">backtest-latest.json</a></span></div>`;
   window.SIDANGCharts.drawChart($("chartBacktest"), {
-    series: [{ points: bt.equity_curve, color: "#60a5fa", width: 1.5 }],
-    hlines: [{ y: s.starting_cash, color: "#fbbf24", label: "modal awal" }],
+    series: [{ points: detail.equity_curve, color: PAL.sky, width: 1.5, fill: true }],
+    hlines: [{ y: s.starting_cash, color: PAL.yellow, label: "modal awal" }],
     yFmt: (v) => "$" + Math.round(v).toLocaleString("id-ID"),
     empty: "—",
   });

@@ -1,4 +1,20 @@
-/* SIDANG charts — canvas vanilla, DPR-aware, tanpa library eksternal. */
+/* SIDANG charts — canvas vanilla, DPR-aware, tanpa library eksternal.
+   v2: fill area gradien + active dot (pola chart-card BoardUI), redraw saat resize. */
+
+const C = {
+  grid: "#262626",
+  label: "#737373",
+  lime: "#a3e635",
+  rose: "#fb7185",
+  sky: "#38bdf8",
+  teal: "#2dd4bf",
+  yellow: "#facc15",
+  accent: "#3392ff",
+  panel: "#171717",
+  panel2: "#262626",
+};
+
+const _registry = new Map(); // canvas -> opts terakhir (untuk redraw saat resize)
 
 function setupCanvas(cv) {
   const dpr = window.devicePixelRatio || 1;
@@ -26,23 +42,24 @@ function fmtTime(ms, span) {
 
 /**
  * drawChart(cv, opts)
- * opts.series : [{ points: [[x(ms), y]], color, width, dash }]
+ * opts.series : [{ points: [[x(ms), y]], color, width, dash, fill: true|false }]
  * opts.hlines : [{ y, color, label, dash }]
  * opts.markers: [{ x, y, color }]
  * opts.yFmt   : fungsi format label-y (default fmtNum)
  */
 function drawChart(cv, opts) {
+  _registry.set(cv, opts);
   const { ctx, w, h } = setupCanvas(cv);
   const series = (opts.series || []).filter((s) => s.points && s.points.length > 0);
   const hlines = opts.hlines || [];
   if (series.length === 0 && hlines.length === 0) {
-    ctx.fillStyle = "#8b95a7";
-    ctx.font = "13px system-ui";
+    ctx.fillStyle = C.label;
+    ctx.font = "13px Inter, system-ui";
     ctx.textAlign = "center";
     ctx.fillText(opts.empty || "belum ada data", w / 2, h / 2);
     return;
   }
-  const padL = 56, padR = 14, padT = 12, padB = 24;
+  const padL = 56, padR = 14, padT = 14, padB = 24;
   const iw = w - padL - padR, ih = h - padT - padB;
 
   let xs = [], ys = [];
@@ -60,18 +77,19 @@ function drawChart(cv, opts) {
   const yFmt = opts.yFmt || fmtNum;
 
   // grid + label y
-  ctx.font = "10.5px ui-monospace, Menlo, monospace";
+  ctx.font = "10.5px JetBrains Mono, ui-monospace, Menlo, monospace";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   for (let i = 0; i <= 4; i++) {
     const yv = ymin + ((ymax - ymin) * i) / 4;
     const yy = Y(yv);
-    ctx.strokeStyle = "rgba(35,42,56,0.85)";
+    ctx.strokeStyle = C.grid;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(padL, yy);
-    ctx.lineTo(w - padR, yy);
+    ctx.moveTo(padL, yy + 0.5);
+    ctx.lineTo(w - padR, yy + 0.5);
     ctx.stroke();
-    ctx.fillStyle = "#8b95a7";
+    ctx.fillStyle = C.label;
     ctx.fillText(yFmt(yv), padL - 6, yy);
   }
   // label x (3 titik)
@@ -79,13 +97,13 @@ function drawChart(cv, opts) {
   ctx.textBaseline = "top";
   for (let i = 0; i <= 2; i++) {
     const xv = xmin + (span * i) / 2;
-    ctx.fillStyle = "#8b95a7";
+    ctx.fillStyle = C.label;
     ctx.fillText(fmtTime(xv, span), X(xv), h - padB + 6);
   }
 
   // garis horizontal referensi
   hlines.forEach((l) => {
-    ctx.strokeStyle = l.color || "#8b95a7";
+    ctx.strokeStyle = l.color || C.label;
     ctx.setLineDash(l.dash || [5, 4]);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -94,19 +112,37 @@ function drawChart(cv, opts) {
     ctx.stroke();
     ctx.setLineDash([]);
     if (l.label) {
-      ctx.fillStyle = l.color || "#8b95a7";
-      ctx.font = "10px system-ui";
+      ctx.fillStyle = l.color || C.label;
+      ctx.font = "10px Inter, system-ui";
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
       ctx.fillText(l.label, padL + 4, Y(l.y) + 2);
     }
   });
 
-  // seri
+  // seri (fill area dulu, garis di atasnya)
   series.forEach((s) => {
-    ctx.strokeStyle = s.color || "#60a5fa";
+    const col = s.color || C.sky;
+    if (s.fill) {
+      const grad = ctx.createLinearGradient(0, padT, 0, padT + ih);
+      grad.addColorStop(0, col + "33"); // ~20% alpha (hex)
+      grad.addColorStop(1, col + "00");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      s.points.forEach(([x, y], i) => {
+        const px = X(x), py = Y(y);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.lineTo(X(s.points[s.points.length - 1][0]), padT + ih);
+      ctx.lineTo(X(s.points[0][0]), padT + ih);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.strokeStyle = col;
     ctx.lineWidth = s.width || 1.6;
     ctx.setLineDash(s.dash || []);
+    ctx.lineJoin = "round";
     ctx.beginPath();
     s.points.forEach(([x, y], i) => {
       const px = X(x), py = Y(y);
@@ -115,15 +151,38 @@ function drawChart(cv, opts) {
     });
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // active dot di titik terakhir (pola ActiveDot BoardUI: halo + inti)
+    const [lx, ly] = s.points[s.points.length - 1];
+    ctx.beginPath();
+    ctx.arc(X(lx), Y(ly), 6, 0, Math.PI * 2);
+    ctx.fillStyle = col + "40";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(X(lx), Y(ly), 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = C.panel;
+    ctx.stroke();
   });
 
   // marker (mis. titik ENTER)
   (opts.markers || []).forEach((m) => {
-    ctx.fillStyle = m.color || "#4ade80";
+    ctx.fillStyle = m.color || C.lime;
     ctx.beginPath();
     ctx.arc(X(m.x), Y(m.y), m.r || 3, 0, Math.PI * 2);
     ctx.fill();
   });
 }
 
-window.SIDANGCharts = { drawChart };
+let _resizeT = null;
+window.addEventListener("resize", () => {
+  clearTimeout(_resizeT);
+  _resizeT = setTimeout(() => {
+    for (const [cv, opts] of _registry) drawChart(cv, opts);
+    if (window.SIDANGPrice) window.SIDANGPrice.draw();
+  }, 150);
+});
+
+window.SIDANGCharts = { drawChart, C };
