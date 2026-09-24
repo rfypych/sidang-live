@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIDANG — Monitor Paper Live</title>
+<meta name="description" content="SIDANG: paper trading bot Monte Carlo double-barrier. Uang virtual, tanpa live order." />
+<link rel="stylesheet" href="web/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>⚖️</text></svg>" />
+</head>
+<body>
+
+<header>
+  <h1>SIDANG <span>— monitor paper live</span></h1>
+  <span id="statusPill" class="pill">memuat…</span>
+  <span class="spacer"></span>
+  <button class="refresh" id="btnRefresh">segarkan</button>
+</header>
+<div class="small muted" id="metaLine" style="margin:-6px 0 10px">memuat…</div>
+<div class="small muted" id="lastRun" style="margin-bottom:12px"></div>
+<div class="banner" id="banner" style="display:none"></div>
+
+<div class="cards">
+  <div class="card"><div class="label">Ekuitas Virtual</div><div class="value" id="cEquity">—</div><div class="sub" id="cEquitySub"></div></div>
+  <div class="card"><div class="label">PnL Realized</div><div class="value" id="cPnl">—</div><div class="sub" id="cPnlSub"></div></div>
+  <div class="card"><div class="label">Trade Tertutup</div><div class="value" id="cTrades">—</div><div class="sub" id="cTradesSub"></div></div>
+  <div class="card"><div class="label">Posisi</div><div class="value" id="cPos">—</div><div class="sub" id="cPosSub"></div></div>
+  <div class="card"><div class="label">Sidang Terakhir</div><div class="value" id="cVerdict">—</div><div class="sub" id="cVerdictSub"></div></div>
+</div>
+
+<div class="small" id="todayLine" style="margin-bottom:14px"></div>
+
+<section>
+  <h2>Kurva Ekuitas (uang virtual, mark-to-close)</h2>
+  <canvas id="chartEquity"></canvas>
+</section>
+
+<section>
+  <h2>P(TP) Pesimis per Sidang — 10.000 path × 2 generator</h2>
+  <canvas id="chartTrials"></canvas>
+  <div class="small muted" id="trialsNote" style="margin-top:8px"></div>
+</section>
+
+<section>
+  <h2>Trade Tertutup (buku kertas, fee 0,25% roundtrip jujur)</h2>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>waktu exit (WIB)</th><th>entry</th><th>exit</th><th>alasan</th><th>gross</th><th>fee</th><th>pnl</th><th>pnl %</th></tr></thead>
+    <tbody id="tradesBody"></tbody>
+  </table>
+  </div>
+</section>
+
+<section id="backtestSection">
+  <h2>Backtest Walk-Forward (replay historis, tanpa fitting parameter)</h2>
+  <div class="grid2">
+    <div class="stat-rows" id="backtestBody"></div>
+    <div><canvas id="chartBacktest"></canvas></div>
+  </div>
+</section>
+
+<section>
+  <h2>Kesehatan Run (heartbeat bot)</h2>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>run (WIB)</th><th>candle</th><th>sidang</th><th>enter/exit</th><th>ekuitas</th><th>durasi</th><th>status</th></tr></thead>
+    <tbody id="runsBody"></tbody>
+  </table>
+  </div>
+</section>
+
+<footer>
+  <b>SIDANG</b> = paper-only: uang virtual $10.000, tanpa kode order live, data publik Binance, fee dimodelkan jujur.
+  Ini alat riset, <b>bukan nasihat keuangan</b>. Setiap entry harus menang sidang Monte Carlo 10.000 path
+  (double-barrier TP/SL, dua generator independen, agregasi pesimis) — verdict STAND_DOWN lebih sering terjadi,
+  dan itu fitur, bukan bug. Live dengan uang nyata hanya setelah umur 18 (KYC) DAN gate OOS lolos.
+  <div style="margin-top:6px" class="mono"><span id="updated">—</span> • refresh otomatis 60 detik</div>
+</footer>
+
+<script src="web/charts.js"></script>
+<script src="web/app.js"></script>
+</body>
+</html>
