@@ -7,7 +7,11 @@ perilaku pasar baru-baru ini — anggap weak-form evidence).
 
 Deterministik: seed per candle (crc32) + data bursa publik.
 
-  python backtest.py --months 6 --profile conservative
+Mendukung CHUNKED RUN (sandbox/laptop terbatas):
+  python backtest.py --months 1 --max-minutes 7    # chunk pertama
+  python backtest.py --months 1 --resume           # ulangi sampai selesai
+Checkpoint ditulis ke reports/.backtest-checkpoint.json; laporan final
+hanya ditulis saat replay menyusul data terbaru.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from sidang.ledger import PaperLedger
 
 ROOT = Path(__file__).resolve().parent
 REPORTS = ROOT / "reports"
+CKPT = REPORTS / ".backtest-checkpoint.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--alloc", type=float, default=DEFAULTS["alloc"])
     ap.add_argument("--seed-base", type=int, default=0)
     ap.add_argument("--tag", default=None, help="suffix nama file laporan")
+    ap.add_argument("--resume", action="store_true", help="lanjutkan dari checkpoint")
+    ap.add_argument("--max-minutes", type=float, default=7.0, help="batas wall per chunk (lalu checkpoint)")
     return ap.parse_args()
 
 
@@ -53,57 +60,79 @@ def main() -> None:
     t_wall = time.time()
     iv_ms = INTERVAL_MS[a.interval]
     now_ms = time.time() * 1000.0
-    start_ms = now_ms - a.months * 30.44 * 86_400_000.0
-    fetch_from = start_ms - (a.lookback + 5) * iv_ms  # lookback konteks sebelum periode
-
-    print(f"SIDANG backtest | {a.symbol} {a.interval} | {a.months} bulan | profil {a.profile}")
-    print(f"periode keputusan: {iso(start_ms)} .. {iso(now_ms)} | fetch dari {iso(fetch_from)}")
-    data = fetch_klines_range(a.symbol, a.interval, fetch_from, now_ms)
-    n = data["close"].size
-    print(f"candle tertutup termuat: {n:,}")
 
     params = {
         "symbol": a.symbol, "interval": a.interval, "lookback": a.lookback, "tp": a.tp,
         "sl": a.sl, "horizon": a.horizon, "paths": a.paths, "fee": a.fee,
         "profile": a.profile, "block": a.block, "cash": a.cash, "alloc": a.alloc,
     }
+
     core = ReplayCore(params, seed_base=a.seed_base)
     ledger = PaperLedger(cash=a.cash, path=REPORTS / ".backtest-ledger-tmp.jsonl", fee_rt_pct=a.fee)
     core.attach_ledger(ledger)
-    core.state["started_iso"] = iso(start_ms)
 
-    first_decision = a.lookback - 1  # window penuh berakhir di candle ini
-    if first_decision < 63:
-        raise ValueError("lookback terlalu pendek (min 64)")
+    # ---------- muat checkpoint (resume) atau mulai segar ----------
+    ck: dict | None = None
+    if a.resume and CKPT.exists():
+        ck = json.loads(CKPT.read_text())
+        if ck["params"] != params:
+            raise RuntimeError("checkpoint milik parameter berbeda — hapus checkpoint atau samakan parameter")
+        core.state = ck["state"]
+        ledger.cash = float(ck["cash"])
+        ledger.position = ck["position"]
+        print(f"[resume] dari {iso(ck['last_open_ms'])} | equity terakhir ${ck['equity_curve'][-1][1]:,.2f}")
+    if ck is None:
+        core.state["started_iso"] = None  # diisi setelah tahu start_ms
 
-    opens = data["open_time"]
-    highs, lows, closes = data["high"], data["low"], data["close"]
-
-    equity_curve: list[tuple[float, float]] = []  # (open_ms, equity mark-to-close)
-    trades: list[dict] = []
-    agg = {
-        "trials": 0, "enters": 0, "stand_downs": 0,
+    start_ms = float(ck["start_ms"]) if ck else now_ms - a.months * 30.44 * 86_400_000.0
+    last_open = float(ck["last_open_ms"]) if ck else 0.0
+    agg = ck["agg"] if ck else {
+        "trials": 0, "enters": 0,
         "p_tp_used_sum": 0.0, "ev_used_sum": 0.0, "div_sum": 0.0,
         "div_max": 0.0, "be_sum": 0.0, "ms_sum": 0.0,
     }
-    bars_in_position = 0
-    day_equity: dict[str, float] = {}
+    trades: list[dict] = ck["trades"] if ck else []
+    equity_curve: list[list] = ck["equity_curve"] if ck else []
+    day_equity: dict[str, float] = {d: e for d, e in ck["day_equity"]} if ck else {}
+    bars_in_position = int(ck["bars_in_position"]) if ck else 0
+
+    if ck is None:
+        core.state["started_iso"] = iso(start_ms)
+
+    # ---------- fetch konteks + candle baru ----------
+    fetch_from = min(start_ms, (last_open if ck else start_ms)) - (a.lookback + 5) * iv_ms
+    if ck:
+        fetch_from = last_open - (a.lookback + 5) * iv_ms  # hanya konteks sejak checkpoint
+    print(
+        f"SIDANG backtest | {a.symbol} {a.interval} | periode {iso(start_ms)} .. sekarang "
+        f"| profil {a.profile} | resume={'ya' if ck else 'tidak'}"
+    )
+    data = fetch_klines_range(a.symbol, a.interval, fetch_from, now_ms)
+    n = data["close"].size
+    opens, highs, lows, closes = data["open_time"], data["high"], data["low"], data["close"]
+    print(f"candle tertutup termuat: {n:,} (konteks lookback {a.lookback})")
+
+    decision_from = start_ms if not ck else last_open + 0.5
     progress_path = REPORTS / ".backtest-progress.json"
     REPORTS.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
-    for i in range(first_decision, n):
+    deadline = t0 + a.max_minutes * 60.0
+    n_done_this_chunk = 0
+    for i in range(a.lookback - 1, n):
         open_ms = float(opens[i])
-        # hanya keputusan di dalam periode
-        if open_ms < start_ms:
+        if open_ms < decision_from:
             continue
+        if time.time() > deadline and n_done_this_chunk > 0:
+            print(f"[chunk] batas {a.max_minutes} menit tercapai -> checkpoint di {iso(open_ms)}")
+            break
         ev = core.process_candle(
             open_ms=open_ms, high=float(highs[i]), low=float(lows[i]), close=float(closes[i]),
-            window_closes=closes[i - a.lookback + 1 : i + 1],
+            window_closes=closes[i - a.lookback + 1: i + 1],
         )
+        n_done_this_chunk += 1
         if ev["type"] == "trial":
             agg["trials"] += 1
-            agg["stand_downs"] += 1
             tr = ev["trial"]
             agg["p_tp_used_sum"] += tr["p_tp_used"]
             agg["ev_used_sum"] += tr["ev_used"]
@@ -111,9 +140,8 @@ def main() -> None:
             agg["div_max"] = max(agg["div_max"], tr["div_pp"])
             agg["be_sum"] += tr["be_pct"]
             agg["ms_sum"] += tr["ms"]
-        elif ev["type"] == "enter":
-            agg["enters"] += 1
-            agg["stand_downs"] -= 1
+            if tr["verdict"] == "enter":
+                agg["enters"] += 1
         elif ev["type"] == "exit":
             tr = dict(ev["trade"])
             tr["exit_iso"] = iso(open_ms)
@@ -121,29 +149,54 @@ def main() -> None:
             trades.append(tr)
 
         eq = core.equity(float(closes[i]))
-        equity_curve.append((open_ms, eq))
-        day_equity[iso(open_ms)[:10]] = eq
-        if core.ledger.position is not None:
+        equity_curve.append([int(open_ms), round(eq, 2)])
+        day_equity[iso(open_ms)[:10]] = round(eq, 2)
+        if ledger.position is not None:
             bars_in_position += 1
 
-        done = i - first_decision + 1
-        if done % 1000 == 0 or i == n - 1:
+        done = n_done_this_chunk
+        if done % 1000 == 0:
             el = (time.time() - t0) / 60.0
-            pct = done / max(1, (n - first_decision))
             prog = {
-                "done": done, "total": n - first_decision, "pct": round(pct * 100, 2),
-                "elapsed_min": round(el, 1), "eta_min": round(el / max(pct, 1e-9) * (1 - pct), 1),
-                "trials": agg["trials"], "enters": agg["enters"], "exits": core.state["n_exits"],
-                "equity": round(equity_curve[-1][1], 2), "ts": iso(time.time() * 1000),
+                "done": done, "trials": agg["trials"], "enters": agg["enters"],
+                "exits": core.state["n_exits"], "equity": equity_curve[-1][1],
+                "ts": iso(time.time() * 1000),
             }
             progress_path.write_text(json.dumps(prog))
             print(
-                f"  [{done:>6}/{n - first_decision}] {iso(open_ms)} eq=${eq:,.2f} "
-                f"trials={agg['trials']:,} enters={agg['enters']} exits={core.state['n_exits']} "
-                f"eta {prog['eta_min']}m"
+                f"  [{done:>6} chunk-bar] {iso(open_ms)} eq=${eq:,.2f} "
+                f"trials={agg['trials']:,} enters={agg['enters']} exits={core.state['n_exits']}"
             )
 
-    # ---- statistik ----
+    if not equity_curve:
+        raise RuntimeError("tidak ada bar keputusan yang diproses — periksa rentang waktu")
+
+    last_processed_open = float(equity_curve[-1][0])
+    caught_up = last_processed_open >= now_ms - 2.0 * iv_ms
+
+    if not caught_up:
+        # ---------- simpan checkpoint, chunk berikutnya via --resume ----------
+        CKPT.write_text(json.dumps({
+            "params": params, "start_ms": start_ms, "last_open_ms": last_processed_open,
+            "cash": ledger.cash, "position": ledger.position, "state": core.state,
+            "agg": agg, "trades": trades, "equity_curve": equity_curve,
+            "day_equity": [[d, e] for d, e in day_equity.items()],
+            "bars_in_position": bars_in_position,
+        }))
+        progress_path.write_text(json.dumps({
+            "done": n_done_this_chunk, "trials": agg["trials"], "enters": agg["enters"],
+            "exits": core.state["n_exits"], "equity": equity_curve[-1][1],
+            "status": "checkpoint", "last": iso(last_processed_open),
+            "ts": iso(time.time() * 1000),
+        }))
+        print(
+            f"[checkpoint] {iso(last_processed_open)} | total {len(equity_curve):,} bar | "
+            f"LANJUTKAN: python backtest.py --months {a.months} --profile {a.profile} --resume"
+        )
+        return
+
+    # ---------- selesai: statistik + laporan ----------
+    final_to = iso(last_processed_open)
     eq_arr = np.array([e for _, e in equity_curve], dtype=float)
     run_max = np.maximum.accumulate(eq_arr)
     max_dd = float(np.max(1.0 - eq_arr / run_max)) if eq_arr.size else 0.0
@@ -156,7 +209,7 @@ def main() -> None:
     gross_w = sum(t["pnl"] for t in wins)
     gross_l = abs(sum(t["pnl"] for t in losses))
     pf = round(gross_w / gross_l, 3) if gross_l > 0 else (None if not wins else float("inf"))
-    reasons = {}
+    reasons: dict[str, int] = {}
     for t in trades:
         reasons[t["reason"]] = reasons.get(t["reason"], 0) + 1
 
@@ -165,13 +218,13 @@ def main() -> None:
         "generated_utc": iso(time.time() * 1000),
         "params": params,
         "period": {
-            "from": iso(start_ms), "to": iso(float(opens[-1])), "bars": len(equity_curve),
+            "from": iso(start_ms), "to": final_to, "bars": len(equity_curve),
             "months": a.months, "symbol": a.symbol, "interval": a.interval,
         },
         "stats": {
             "starting_cash": a.cash,
-            "final_equity": round(eq_arr[-1], 2) if eq_arr.size else a.cash,
-            "total_return_pct": round((eq_arr[-1] / a.cash - 1) * 100, 2) if eq_arr.size else 0.0,
+            "final_equity": round(float(eq_arr[-1]), 2) if eq_arr.size else a.cash,
+            "total_return_pct": round((float(eq_arr[-1]) / a.cash - 1) * 100, 2) if eq_arr.size else 0.0,
             "realized_pnl": round(sum(t["pnl"] for t in trades), 2),
             "fees_paid": round(sum(t["fee"] for t in trades), 2),
             "n_trades": len(trades),
@@ -196,10 +249,7 @@ def main() -> None:
             "max_divergence_pp": round(agg["div_max"], 2),
             "avg_trial_ms": round(agg["ms_sum"] / max(1, agg["trials"]), 1),
         },
-        "equity_curve": [  # downsample <= 1200 titik
-            [int(ms), round(eq, 2)]
-            for ms, eq in _downsample(equity_curve, 1200)
-        ],
+        "equity_curve": _downsample(equity_curve, 1200),
         "trades": [
             {
                 "entry_iso": t["entry_iso"], "exit_iso": t["exit_iso"], "reason": t["reason"],
@@ -227,12 +277,13 @@ def main() -> None:
     out = REPORTS / f"backtest-{tag}.json"
     out.write_text(json.dumps(report, indent=1))
     (REPORTS / "backtest-latest.json").write_text(json.dumps(report, indent=1))
+    CKPT.unlink(missing_ok=True)
     progress_path.unlink(missing_ok=True)
     (REPORTS / ".backtest-ledger-tmp.jsonl").unlink(missing_ok=True)
 
     print("=" * 64)
     s = report["stats"]
-    print(f"PERIODE    : {report['period']['from']} .. {report['period']['to']} ({len(equity_curve):,} bar)")
+    print(f"PERIODE    : {report['period']['from']} .. {final_to} ({len(equity_curve):,} bar)")
     print(f"SIDANG     : {agg['trials']:,} trial | {agg['enters']} ENTER ({report['sidang']['enter_rate_pct']}%)")
     print(f"TRADE      : {s['n_trades']} | WR {s['win_rate_pct']}% | PF {s['profit_factor']}")
     print(f"HASIL      : ${a.cash:,.0f} -> ${s['final_equity']:,.2f} ({s['total_return_pct']:+.2f}%)")
@@ -241,7 +292,7 @@ def main() -> None:
     print(f"lokal      : {out.name} + backtest-latest.json | wall {((time.time()-t_wall)/60):.1f} menit")
 
 
-def _downsample(curve: list[tuple[float, float]], max_pts: int) -> list[tuple[float, float]]:
+def _downsample(curve: list[list], max_pts: int) -> list[list]:
     if len(curve) <= max_pts:
         return curve
     step = len(curve) / max_pts
