@@ -2,3 +2,4 @@
 {"run":"2026-09-24T20:03:21Z","candles":0,"trials":0,"enters":0,"exits":0,"equity":10000.0,"elapsed_s":0.7,"status":"idle"}
 {"run":"2026-09-24T20:55:45Z","candles":11,"trials":11,"enters":0,"exits":0,"equity":10000.0,"elapsed_s":4.3,"status":"ok"}
 {"run":"2026-09-24T21:40:52Z","candles":9,"trials":9,"enters":0,"exits":0,"equity":10000.0,"elapsed_s":4.5,"status":"ok"}
+{"run":"2026-09-24T23:49:14Z","candles":25,"trials":25,"enters":0,"exits":0,"equity":10000.0,"elapsed_s":7.7,"status":"ok"}
