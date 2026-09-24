@@ -22,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: sidang-backtest
+  group: sidang-backtest-${{ github.event.inputs.profile || 'conservative' }}
   cancel-in-progress: false
 
 jobs:
