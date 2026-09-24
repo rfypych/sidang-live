@@ -11,6 +11,12 @@ on:
         default: "conservative"
         type: choice
         options: [conservative, balanced, aggressive]
+      tag:
+        description: "Suffix nama laporan (kosong = profil-tanggal)"
+        default: ""
+      max_minutes:
+        description: "Batas wall-time kompute (menit)"
+        default: "270"
 
 permissions:
   contents: write
@@ -30,8 +36,23 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: reset marker laporan (run tak boleh selesai diam-diam)
+        run: rm -f reports/backtest-latest.json
       - name: walk-forward backtest
-        run: python backtest.py --months ${{ github.event.inputs.months || '6' }} --profile ${{ github.event.inputs.profile || 'conservative' }}
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="${{ github.event.inputs.profile || 'conservative' }}-$(date -u +%Y%m%d)"; fi
+          python backtest.py \
+            --months "${{ github.event.inputs.months || '6' }}" \
+            --profile "${{ github.event.inputs.profile || 'conservative' }}" \
+            --max-minutes "${{ github.event.inputs.max_minutes || '270' }}" \
+            --tag "$TAG"
+      - name: pastikan laporan final (bukan checkpoint)
+        run: |
+          test -f reports/backtest-latest.json || {
+            echo "::error::backtest berhenti di checkpoint sebelum mengejar data terbaru (batas menit tercapai). Dispatch ulang dengan max_minutes lebih besar.";
+            exit 1;
+          }
       - name: commit laporan
         run: |
           git config user.name "sidang-bot"

@@ -277,6 +277,8 @@ def main() -> None:
     out = REPORTS / f"backtest-{tag}.json"
     out.write_text(json.dumps(report, indent=1))
     (REPORTS / "backtest-latest.json").write_text(json.dumps(report, indent=1))
+    # per-profil: dashboard membandingkan konservatif/balanced/aggressive tanpa glob HTTP
+    (REPORTS / f"backtest-{a.profile}-latest.json").write_text(json.dumps(report, indent=1))
     CKPT.unlink(missing_ok=True)
     progress_path.unlink(missing_ok=True)
     (REPORTS / ".backtest-ledger-tmp.jsonl").unlink(missing_ok=True)
