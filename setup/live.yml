@@ -2,7 +2,7 @@ name: sidang-live
 
 on:
   schedule:
-    - cron: "*/15 * * * *" # tiap 15 menit; catch-up menoleransi delay cron
+    - cron: "4,19,34,49 * * * *" # tiap 15 menit di MENIT SEPI — hindari puncak antrean Actions (:00/:15/:30/:45) tempat cron gratisan sering delay/drop; catch-up menoleransi delay/drop jadwal apa pun
   workflow_dispatch: {}
 
 permissions:
