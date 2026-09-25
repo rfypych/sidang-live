@@ -71,6 +71,7 @@ async function load() {
   ]);
 
   renderHeader(state, runs);
+  renderExplainer(state, trials);
   renderCards(state, ledger);
   renderToday(trials, ledger);
   renderPrice(state, klines, ledger);
@@ -102,6 +103,45 @@ function renderHeader(state, runs) {
     banner.innerHTML = "Bot <b>terlambat >40 menit</b>. Kemungkinan: cron GitHub Actions belum aktif (lihat <a href='setup/SETUP.md'>setup/SETUP.md</a>), Actions gagal (cek tab Actions di repo), atau sedang di-<i>queue</i>.";
   } else {
     banner.style.display = "none";
+  }
+}
+
+function renderExplainer(state, trials) {
+  // ingat preferensi buka/tutup panel "Ini apa sih?"
+  const ex = $("explainer");
+  if (ex) {
+    if (localStorage.getItem("sidang-explainer") === "closed") ex.open = false;
+    ex.addEventListener("toggle", () =>
+      localStorage.setItem("sidang-explainer", ex.open ? "open" : "closed"));
+  }
+
+  // angka hidup blok "kenapa 0 trade"
+  const last = trials.length ? trials[trials.length - 1] : null;
+  const ePtp = $("exPtp"), eBe = $("exBe"), eTr = $("exTrials"), eEn = $("exEnters");
+  if (ePtp && last && last.p_tp_used != null) ePtp.textContent = Number(last.p_tp_used).toFixed(1) + "%";
+  if (eBe && last && last.be_pct != null) eBe.textContent = Number(last.be_pct).toFixed(1) + "%";
+  if (eTr && state) eTr.textContent = `${state.n_trials ?? 0}\u00d7 sidang`;
+  if (eEn && state) eEn.textContent = `${state.n_enters ?? 0}\u00d7`;
+
+  // jam OOS 6 bulan (mulai dari started_iso di buku besar, bukan hardcode)
+  const fill = $("oosFill");
+  if (fill && state && state.started_iso) {
+    const start = new Date(state.started_iso).getTime();
+    const endD = new Date(start); endD.setMonth(endD.getMonth() + 6);
+    const chkD = new Date(start); chkD.setMonth(chkD.getMonth() + 3);
+    const end = endD.getTime();
+    const now = Date.now();
+    const pct = Math.max(0, Math.min(100, ((now - start) / (end - start)) * 100));
+    fill.style.width = pct.toFixed(2) + "%";
+    const pctEl = $("oosPct");
+    if (pctEl) pctEl.textContent = pct.toFixed(1) + "%";
+    const daysEl = $("oosDays");
+    if (daysEl) {
+      const dayN = Math.max(0, Math.floor((now - start) / 864e5));
+      const f = (d) => d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", ...WIB });
+      daysEl.textContent =
+        `hari ke-${dayN + 1} dari \u00b1182 \u2022 cek pertama ${f(chkD)} \u2022 tamat ${f(endD)}`;
+    }
   }
 }
 
