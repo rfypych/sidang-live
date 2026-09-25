@@ -86,21 +86,38 @@ async function load() {
 function renderHeader(state, runs) {
   const lastRun = state ? state.last_run_iso : null;
   const ageMin = ago(lastRun);
-  const alive = ageMin < 40;
+  // Cron gratisan GitHub bisa delay/drop tick di jam sibuk (puncak tiap awal jam) —
+  // itu ANTRE, bukan mati; catch-up menjamin data kejar begitu tick berikutnya jalan.
+  // Jadi: hijau < 40 mnt, kuning ANTRE 40–75 mnt, merah baru > 75 mnt (5 tick berurutan hilang).
   const pill = $("statusPill");
-  pill.textContent = alive ? "● BOT HIDUP" : "● TERLAMBAT / MATI";
-  pill.className = "pill " + (alive ? "ok" : "bad");
+  if (ageMin < 40) {
+    pill.textContent = "● BOT HIDUP";
+    pill.className = "pill ok";
+  } else if (ageMin < 75) {
+    pill.textContent = "● ANTRE (cron gratisan)";
+    pill.className = "pill warn";
+  } else {
+    pill.textContent = "● TERLAMBAT / MATI";
+    pill.className = "pill bad";
+  }
   const p = state ? state.params : {};
   $("metaLine").textContent = `${p.symbol || "—"} ${p.interval || ""} • profil ${p.profile || "—"} • TP ${p.tp}% / SL ${p.sl}% • fee ${p.fee}%`;
   $("priceTitle").textContent = `${p.symbol || "BTCUSDT"} · ${p.interval || "5m"} — aksi harga`;
-  $("lastRun").textContent = "run terakhir: " + (lastRun ? `${fmtWIB(lastRun)} WIB (${Math.round(ageMin)} mnt lalu)` : "belum ada");
+  $("lastRun").textContent =
+    "run terakhir: " +
+    (lastRun ? `${fmtWIB(lastRun)} WIB (${Math.round(ageMin)} mnt lalu)` : "belum ada") +
+    " • jadwal: menit 04/19/34/49 (menit sepi, bebas puncak antrean)";
   const banner = $("banner");
   if (!state) {
     banner.style.display = "block";
     banner.innerHTML = "Record pertama belum ada. Jalankan <span class='mono'>python live_catchup.py</span> (lokal) atau aktifkan workflow GitHub Actions — lihat <a href='setup/SETUP.md'>setup/SETUP.md</a>.";
-  } else if (ago(runs.length ? runs[runs.length - 1].run : null) > 40) {
+  } else if (ago(runs.length ? runs[runs.length - 1].run : null) > 75) {
     banner.style.display = "block";
-    banner.innerHTML = "Bot <b>terlambat >40 menit</b>. Kemungkinan: cron GitHub Actions belum aktif (lihat <a href='setup/SETUP.md'>setup/SETUP.md</a>), Actions gagal (cek tab Actions di repo), atau sedang di-<i>queue</i>.";
+    banner.innerHTML =
+      "Bot <b>tidak jalan &gt;75 menit</b> — ini bukan sekadar antrean biasa (delay 30–60 mnt itu normal di jam sibuk). " +
+      "Begitu bot dipanggil lagi, semua candle terlewat <b>dikejar otomatis</b> (catch-up) — data tidak hilang. " +
+      "Mau paksa jalan sekarang? Buka <a href='https://github.com/rfypych/sidang-live/actions/workflows/live.yml' target='_blank' rel='noopener'>tab Actions → Run workflow</a>. " +
+      "Kalau tetap mati, cek <a href='setup/SETUP.md'>setup/SETUP.md</a>.";
   } else {
     banner.style.display = "none";
   }
