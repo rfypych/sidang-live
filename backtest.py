@@ -131,22 +131,25 @@ def main() -> None:
             window_closes=closes[i - a.lookback + 1: i + 1],
         )
         n_done_this_chunk += 1
-        if ev["type"] == "trial":
-            agg["trials"] += 1
-            tr = ev["trial"]
-            agg["p_tp_used_sum"] += tr["p_tp_used"]
-            agg["ev_used_sum"] += tr["ev_used"]
-            agg["div_sum"] += tr["div_pp"]
-            agg["div_max"] = max(agg["div_max"], tr["div_pp"])
-            agg["be_sum"] += tr["be_pct"]
-            agg["ms_sum"] += tr["ms"]
-            if tr["verdict"] == "enter":
+        # candle bisa memuat >1 kejadian (mis. exit lalu trial lalu enter di candle sama).
+        # Iterasi ev["events"] agar TIDAK ADA kejadian yang hilang dari laporan.
+        for e in ev.get("events") or [ev]:
+            if e["type"] == "trial":
+                agg["trials"] += 1
+                tr = e["trial"]
+                agg["p_tp_used_sum"] += tr["p_tp_used"]
+                agg["ev_used_sum"] += tr["ev_used"]
+                agg["div_sum"] += tr["div_pp"]
+                agg["div_max"] = max(agg["div_max"], tr["div_pp"])
+                agg["be_sum"] += tr["be_pct"]
+                agg["ms_sum"] += tr["ms"]
+            elif e["type"] == "enter":
                 agg["enters"] += 1
-        elif ev["type"] == "exit":
-            tr = dict(ev["trade"])
-            tr["exit_iso"] = iso(open_ms)
-            tr["entry_iso"] = iso(float(tr.get("meta", {}).get("entry_open_ms", open_ms)))
-            trades.append(tr)
+            elif e["type"] == "exit":
+                tr = dict(e["trade"])
+                tr["exit_iso"] = iso(open_ms)
+                tr["entry_iso"] = iso(float(tr.get("meta", {}).get("entry_open_ms", open_ms)))
+                trades.append(tr)
 
         eq = core.equity(float(closes[i]))
         equity_curve.append([int(open_ms), round(eq, 2)])
@@ -196,6 +199,17 @@ def main() -> None:
         return
 
     # ---------- selesai: statistik + laporan ----------
+    # sanity keras: dua jalur hitung (event vs state inti) harus identik.
+    if agg["enters"] != int(core.state["n_enters"]):
+        raise RuntimeError(
+            f"hitung enter tak konsisten: events={agg['enters']} vs state={core.state['n_enters']} "
+            "— laporan tidak boleh ditulis diam-diam salah"
+        )
+    if len(trades) != int(core.state["n_exits"]):
+        raise RuntimeError(
+            f"hitung exit tak konsisten: events={len(trades)} vs state={core.state['n_exits']} "
+            "— laporan tidak boleh ditulis diam-diam salah"
+        )
     final_to = iso(last_processed_open)
     eq_arr = np.array([e for _, e in equity_curve], dtype=float)
     run_max = np.maximum.accumulate(eq_arr)

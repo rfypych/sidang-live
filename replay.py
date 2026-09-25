@@ -139,7 +139,13 @@ class ReplayCore:
 
         Return event ringkas utk log pemanggil (enter/exit/trial/none).
         """
-        ev: dict[str, Any] = {"open_ms": open_ms, "iso": iso(open_ms), "type": "none"}
+        ev: dict[str, Any] = {"open_ms": open_ms, "iso": iso(open_ms), "type": "none", "events": []}
+
+        def _emit(e: dict[str, Any]) -> None:
+            """Catat kejadian; candle bisa punya >1 (mis. exit lalu enter di candle sama).
+            ev top-level = kejadian TERAKHIR (kompat konsumen lama); ev['events'] = semua."""
+            ev["events"].append(e)
+            ev.update(e)
 
         # 1) kelola posisi terbuka di candle NYATA
         pos = self.ledger.position
@@ -150,15 +156,15 @@ class ReplayCore:
                 reason = "stop_loss_tie" if tie else "stop_loss"
                 trade = self.ledger.close(reason, pos["sl_price"])
                 self._book_exit(trade)
-                ev.update({"type": "exit", "reason": reason, "trade": trade})
+                _emit({"type": "exit", "reason": reason, "trade": trade})
             elif high >= pos["tp_price"]:
                 trade = self.ledger.close("take_profit", pos["tp_price"])
                 self._book_exit(trade)
-                ev.update({"type": "exit", "reason": "take_profit", "trade": trade})
+                _emit({"type": "exit", "reason": "take_profit", "trade": trade})
             elif pos["bars_held"] >= self.p["horizon"]:
                 trade = self.ledger.close("timeout", close)
                 self._book_exit(trade)
-                ev.update({"type": "exit", "reason": "timeout", "trade": trade})
+                _emit({"type": "exit", "reason": "timeout", "trade": trade})
             else:
                 pos["bars_held"] += 1
 
@@ -210,7 +216,7 @@ class ReplayCore:
                     else None
                 ),
             }
-            ev.update({"type": "trial", "trial": compact})
+            _emit({"type": "trial", "trial": compact})
 
             if verdict.action == "enter":
                 meta = {
@@ -229,7 +235,7 @@ class ReplayCore:
                 )
                 self.ledger.position["bars_held"] = 0
                 self.state["n_enters"] += 1
-                ev.update(
+                _emit(
                     {
                         "type": "enter",
                         "position": {

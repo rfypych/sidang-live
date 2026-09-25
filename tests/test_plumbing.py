@@ -9,15 +9,78 @@ PASS=False, keluar kode 1.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import replay as replay_mod
 from sidang.judge import RulesJudge
 from sidang.ledger import PaperLedger
-from sidang.mc_engine import SidangEngine
+from sidang.mc_engine import SidangEngine, SimResult, TrialResult
+
+
+def test_events_same_candle() -> bool:
+    """Regresi: candle yang sama bisa berisi exit lalu enter — KEDUANYA harus tercatat.
+
+    Bug lama: ev.update() menimpa -> event 'exit' hilang saat candle yang sama
+    memicu enter baru. Akibatnya backtest melaporkan n_trades=0 padahal ada trade
+    (laporan balanced 6 bulan 2026-09-24: realized 0 vs ekuitas turun).
+    """
+    class FakeEngine:
+        def __init__(self, closes, block_len=None):
+            pass
+
+        def run_trial(self, **kw):
+            be = (kw["sl_pct"] + kw["fee_rt_pct"]) / (
+                (kw["tp_pct"] - kw["fee_rt_pct"]) + (kw["sl_pct"] + kw["fee_rt_pct"])
+            )
+            mbb = SimResult("mbb", 0.60, 0.30, 0.10, 0.50, -1.0, 12.0, kw["n_paths"], kw["horizon"])
+            fhs = SimResult("fhs_garch", 0.58, 0.32, 0.10, 0.45, -1.0, 13.0, kw["n_paths"], kw["horizon"])
+            return TrialResult(
+                symbol=kw["symbol"], interval=kw["interval"], entry_price=50_000.0,
+                tp_pct=kw["tp_pct"], sl_pct=kw["sl_pct"], fee_rt_pct=kw["fee_rt_pct"],
+                breakeven_p_tp=be, sims={"mbb": mbb, "fhs_garch": fhs},
+                divergence_pp=2.0, elapsed_ms=1, extra={},
+            )
+
+    params = {"lookback": 1000, "profile": "balanced"}
+    tmp = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
+    tmp.close()
+    ledger = PaperLedger(cash=10_000.0, path=tmp.name, fee_rt_pct=0.25)
+    core = replay_mod.ReplayCore(params, seed_base=0)
+    core.attach_ledger(ledger)
+    window = np.full(600, 50_000.0)
+
+    orig = replay_mod.SidangEngine
+    replay_mod.SidangEngine = FakeEngine
+    try:
+        evA = core.process_candle(open_ms=1_000, high=50_050.0, low=49_950.0, close=50_000.0,
+                                  window_closes=window)
+        # candle B: harga jatuh tembus SL (low 49.000 <= SL 49.625) lalu engine
+        # (fake) bilang ENTER lagi di candle yang sama -> events harus [exit, trial, enter]
+        evB = core.process_candle(open_ms=2_000, high=49_700.0, low=49_000.0, close=49_100.0,
+                                  window_closes=window)
+    finally:
+        replay_mod.SidangEngine = orig
+
+    types_b = [e["type"] for e in evB.get("events", [])]
+    ok = (
+        [e["type"] for e in evA.get("events", [])] == ["trial", "enter"]
+        and types_b == ["exit", "trial", "enter"]
+        and evB["type"] == "enter"  # kompat: top-level = kejadian terakhir
+        and core.state["n_enters"] == 2
+        and core.state["n_exits"] == 1
+        and len(ledger.trades) == 1
+        and ledger.trades[0]["reason"] == "stop_loss"
+    )
+    print(f"events-same-candle: A={[e['type'] for e in evA.get('events', [])]} B={types_b} "
+          f"enters={core.state['n_enters']} exits={core.state['n_exits']} "
+          f"trades={len(ledger.trades)} -> {'OK' if ok else 'GAGAL'}")
+    Path(tmp.name).unlink(missing_ok=True)
+    return ok
 
 
 def main() -> int:
@@ -80,7 +143,9 @@ def main() -> int:
           f"| tie->SL: {'OK' if ok_tie else 'GAGAL'} | pnl TP: {trade['pnl_pct']:+.2f}% "
           f"| equity: ${ledger.snapshot()['equity']:,.2f}")
 
-    passed = ok_verdict and ok_entry and ok_exit and ok_tie
+    ok_events = test_events_same_candle()
+
+    passed = ok_verdict and ok_entry and ok_exit and ok_tie and ok_events
     print("PLUMBING:", "PASS" if passed else "FAIL")
     return 0 if passed else 1
 

@@ -58,4 +58,6 @@ jobs:
           git config user.name "sidang-bot"
           git config user.email "sidang-bot@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || (git commit -m "backtest: ${{ github.event.inputs.months || '6' }} bulan, ${{ github.event.inputs.profile || 'conservative' }}" && (git push || (git pull --rebase --autostash && git push)))
+          # -X ours: kalau konflik rebase (mis. backtest-latest.json ditimpa run paralel),
+          # versi RUN INI yang menang — laporan fresh tidak boleh mati gara-gara pointer lama.
+          git diff --cached --quiet || (git commit -m "backtest: ${{ github.event.inputs.months || '6' }} bulan, ${{ github.event.inputs.profile || 'conservative' }}" && (git push || (git pull --rebase --autostash -X ours && git push)))

@@ -122,28 +122,30 @@ def main() -> int:
             close=float(data["close"][i]),
             window_closes=data["close"][max(0, i - params["lookback"] + 1): i + 1],
         )
-        if ev["type"] == "trial":
-            n_trials += 1
-            ReplayCore.append_jsonl(trials_path, ev["trial"])
-            print(
-                f"  [{ev['iso']}] close=${ev['trial']['close']:>10,.2f} "
-                f"P(TP)={ev['trial']['p_tp_used']:5.1f}% EV={ev['trial']['ev_used']:+.2f}% "
-                f"div={ev['trial']['div_pp']:.1f}pp -> {ev['trial']['verdict'].upper()}"
-            )
-        elif ev["type"] == "enter":
-            n_enters += 1
-            p = ev["position"]
-            print(
-                f"  [ENTER] qty={p['qty']:.6f} @ ${p['entry_price']:,.2f} "
-                f"TP=${p['tp_price']:,.2f} SL=${p['sl_price']:,.2f} (uang virtual)"
-            )
-        elif ev["type"] == "exit":
-            n_exits += 1
-            tr = ev["trade"]
-            print(
-                f"  [EXIT ] {ev['reason']:>13} @ ${tr['exit_price']:,.2f} "
-                f"pnl={tr['pnl']:+.2f} (gross {tr['pnl_gross']:+.2f}, fee {tr['fee']:.2f})"
-            )
+        # candle bisa memuat >1 kejadian (exit lalu enter di candle sama) — proses SEMUA.
+        for e in ev.get("events") or [ev]:
+            if e["type"] == "trial":
+                n_trials += 1
+                ReplayCore.append_jsonl(trials_path, e["trial"])
+                print(
+                    f"  [{ev['iso']}] close=${e['trial']['close']:>10,.2f} "
+                    f"P(TP)={e['trial']['p_tp_used']:5.1f}% EV={e['trial']['ev_used']:+.2f}% "
+                    f"div={e['trial']['div_pp']:.1f}pp -> {e['trial']['verdict'].upper()}"
+                )
+            elif e["type"] == "enter":
+                n_enters += 1
+                p = e["position"]
+                print(
+                    f"  [ENTER] qty={p['qty']:.6f} @ ${p['entry_price']:,.2f} "
+                    f"TP=${p['tp_price']:,.2f} SL=${p['sl_price']:,.2f} (uang virtual)"
+                )
+            elif e["type"] == "exit":
+                n_exits += 1
+                tr = e["trade"]
+                print(
+                    f"  [EXIT ] {e['reason']:>13} @ ${tr['exit_price']:,.2f} "
+                    f"pnl={tr['pnl']:+.2f} (gross {tr['pnl_gross']:+.2f}, fee {tr['fee']:.2f})"
+                )
 
     # titik ekuitas terakhir run ini (mark-to-close)
     ReplayCore.append_jsonl(equity_path, {
